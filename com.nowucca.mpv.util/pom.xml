@@ -2,12 +2,16 @@
   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.nowucca.mpv</groupId>
+  <parent>
+      <groupId>com.nowucca.mpv</groupId>
+      <artifactId>mpv-parent</artifactId>
+      <version>develop-SNAPSHOT</version>
+  </parent>
+
   <artifactId>com.nowucca.mpv.util</artifactId>
-  <version>1.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
-<name>com.nowucca.mpv.util</name>
+  <name>com.nowucca.mpv.util</name>
   <url>http://maven.apache.org</url>
 
   <properties>
@@ -22,4 +26,30 @@
       <scope>compile</scope>
     </dependency>
   </dependencies>
+
+  <build>
+      <plugins>
+          <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-enforcer-plugin</artifactId>
+          </plugin>
+          <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-compiler-plugin</artifactId>
+          </plugin>
+          <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-checkstyle-plugin</artifactId>
+          </plugin>
+          <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-javadoc-plugin</artifactId>
+          </plugin>
+          <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-source-plugin</artifactId>
+          </plugin>
+      </plugins>
+  </build>
+
 </project>
