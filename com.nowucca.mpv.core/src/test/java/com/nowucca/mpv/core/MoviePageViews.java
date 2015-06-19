@@ -4,6 +4,7 @@ import com.nowucca.mpv.util.UTF8;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.StringWriter;
 import java.io.UnsupportedEncodingException;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -13,8 +14,11 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.codehaus.jackson.JsonNode;
 import org.codehaus.jackson.map.ObjectMapper;
+import org.codehaus.jackson.map.SerializationConfig;
 import org.codehaus.jackson.node.ObjectNode;
 import org.jdom2.Document;
 import org.jdom2.Element;
@@ -42,71 +46,52 @@ public class MoviePageViews {
     public static final String HBO_GO_MOVIE_LIST_URL = "http://xfinitytv.comcast.net/movie.widget";
     public static final String WIKIPEDIA_PAGE_URL_PREFIX = "http://stats.grok.se/json/en/201408/";
 
-    private static final List<Movie> rankedMovies = new ArrayList<Movie>(1000);
 
     /**
      * Get a list of movies and rank them by page view using JSON output.
      */
     public static void main(String[] args) throws Exception {
+        ExecutorService statsThreadPool = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() * 4);
         Observable<Movie> movies = getMovies();
+        int i = 0;
+
         movies.map((m) -> setWikiUrl(m))
-                .filter((m)->m.getWikiUrl() != null)
-                .map((m) -> setJSON(m, 10000))
+                .filter((m) -> m.getWikiUrl() != null)
+                .flatMap((m) -> Observable.<Movie>create((observer) -> {
+                    statsThreadPool.submit(() -> {
+                        setJSON(m, 10000);
+                        observer.onNext(m);
+                        observer.onCompleted();
+                    });
+                }))
                 .filter((m) -> m.getJSON() != null)
                 .map((m) -> setTotalPageViews(m))
-                .filter((m)->(m.getTotalPageViews() != null))
-                .take(50)
-                .subscribe(new Subscriber<Movie>() {
-                    @Override
-                    public void onError(Throwable throwable) {
-                        throwable.printStackTrace();
-                        System.out.println("Encountered error.");
-                    }
+                .filter((m) -> (m.getTotalPageViews() != null))
+                .doOnNext((m) -> System.out.format("[%s] Processed movie %s\n", Thread.currentThread().getName(), m
+                        .title))
+                .toSortedList()
+                .map((rankedMovies) -> moviesToJson(rankedMovies))
+                .finallyDo(() -> statsThreadPool.shutdown())
+                .subscribe((outputJson) -> System.out.format("[%s] %s", Thread.currentThread().getName(), outputJson));
 
-                    @Override
-                    public void onNext(Movie movie) {
-                        rankedMovies.add(movie);
-                        System.out.println("Processed " + movie.getTitle());
-                    }
+    }
 
-                    @Override
-                    public void onCompleted() {
-                        System.out.println("Completed.");
+    private static String moviesToJson(List<Movie> rankedMovies) {
+        final ObjectMapper mapper = new ObjectMapper();
+        mapper.enable(SerializationConfig.Feature.INDENT_OUTPUT);
+        final ObjectNode root = mapper.createObjectNode();
 
-                        Collections.sort(rankedMovies);
-                        final ObjectMapper mapper = new ObjectMapper();
-                        final ObjectNode root = mapper.createObjectNode();
-
-                        Observable.from(rankedMovies)
-                                .doOnNext((movie) -> {
-                                    ObjectNode movieNode = root.putObject("movie-" + movie.getId());
-                                    movieNode.put("title", movie.getTitle());
-                                    movieNode.put("id", movie.getId());
-                                    movieNode.put("totalPageViews", movie.getTotalPageViews());
-                                })
-                                .subscribe(new Subscriber<Movie>() {
-                                    @Override
-                                    public void onCompleted() {
-                                        try {
-                                            mapper.writeValue(System.out, root);
-                                        } catch (IOException e) {
-                                            e.printStackTrace();
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-
-                                    @Override
-                                    public void onError(Throwable throwable) {
-
-                                    }
-
-                                    @Override
-                                    public void onNext(Movie movie) {
-
-                                    }
-                                });
-                    }
-                });
+        for(Movie movie: rankedMovies) {
+            ObjectNode movieNode = root.putObject("movie-" + movie.getId());
+            movieNode.put("title", movie.getTitle());
+            movieNode.put("id", movie.getId());
+            movieNode.put("totalPageViews", movie.getTotalPageViews());
+        }
+        try {
+            return mapper.writeValueAsString(root);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private static Movie setWikiUrl(Movie m) {
@@ -128,14 +113,10 @@ public class MoviePageViews {
         Document moviesDocument = builder.build(new URL(HBO_GO_MOVIE_LIST_URL));
         Element rootNode = moviesDocument.getRootElement();
         Namespace namespace = rootNode.getNamespace();
-        List<Element> moviesElements = rootNode.getChild("body", namespace).getChildren("a", namespace);
-        List<Movie> movieList = new ArrayList<Movie>(moviesElements.size());
-        for (Element movie: moviesElements) {
-            movieList.add(new Movie(movie.getAttributeValue("id"),
-                    movie.getAttributeValue("data-t"),
-                    movie.getAttributeValue("href")));
-        }
-        return Observable.from(movieList);
+        return Observable.from(rootNode.getChild("body", namespace).getChildren("a", namespace))
+                .map((e)->new Movie(e.getAttributeValue("id"),
+                        e.getAttributeValue("data-t"),
+                        e.getAttributeValue("href")));
     }
 
     static Movie setTotalPageViews(Movie movie)  {
@@ -169,6 +150,7 @@ public class MoviePageViews {
      */
     public static Movie setJSON(Movie movie, int timeout) {
         try {
+            System.out.format("[%s] Reading stats %s\n", Thread.currentThread().getName(),movie.title);
             URL u = new URL(movie.getWikiUrl());
             HttpURLConnection c = (HttpURLConnection) u.openConnection();
             c.setRequestMethod("GET");
@@ -259,9 +241,6 @@ public class MoviePageViews {
         public String getJSON() {
             return JSON;
         }
-
-
-
     }
 }
 
